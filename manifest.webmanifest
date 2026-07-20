@@ -1,0 +1,27 @@
+{
+  "id": "./",
+  "name": "아티초크버리기",
+  "short_name": "아티초크",
+  "description": "AI 및 로컬 플레이어와 즐기는 아티초크 덱 제거 카드게임",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#101613",
+  "theme_color": "#18231c",
+  "icons": [
+    {
+      "src": "assets/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "assets/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

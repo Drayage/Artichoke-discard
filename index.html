@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#18231c">
+    <meta name="description" content="AI 및 로컬 플레이어와 즐기는 아티초크 덱 제거 카드게임">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="아티초크버리기">
+    <title>아티초크버리기</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" type="image/png" sizes="192x192" href="assets/icons/icon-192.png">
+    <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+    <link rel="stylesheet" href="styles.css?v=26">
+  </head>
+  <body>
+    <section id="titleScreen" class="title-screen">
+      <div class="title-visual" aria-hidden="true">
+        <img src="assets/cards/artichoke.png" alt="">
+        <img src="assets/cards/carrot.png" alt="">
+        <img src="assets/cards/beet.png" alt="">
+        <img src="assets/cards/broccoli.png" alt="">
+        <img src="assets/cards/eggplant.png" alt="">
+      </div>
+      <div class="title-copy">
+        <p class="eyebrow">가볍게 수확하고 영리하게 버리는 덱빌딩 게임</p>
+        <h1><span>아티초크</span><span>버리기</span></h1>
+        <p>손에서 아티초크를 모두 털어내는 사람이 승리합니다.</p>
+      </div>
+      <section id="roomSetup" class="room-setup" aria-labelledby="roomTitle">
+        <div class="room-heading">
+          <div>
+            <p class="eyebrow">게임 설정</p>
+            <h2 id="roomTitle">새 방 만들기</h2>
+          </div>
+          <span class="mode-badge">로컬</span>
+        </div>
+        <div class="setup-field">
+          <span class="setup-label">참가 인원</span>
+          <div id="playerCountControl" class="segmented" aria-label="참가 인원">
+            <button type="button" data-count="2" class="active">2명</button>
+            <button type="button" data-count="3">3명</button>
+            <button type="button" data-count="4">4명</button>
+          </div>
+        </div>
+        <div class="setup-field mode-field">
+          <span class="setup-label">게임 모드</span>
+          <div id="gameModeControl" class="segmented mode-segmented" aria-label="게임 모드">
+            <button type="button" data-mode="classic" class="active">기본</button>
+            <button type="button" data-mode="rule-only">변칙 규칙</button>
+            <button type="button" data-mode="wild-garden">별난 텃밭</button>
+            <button type="button" data-mode="custom">커스텀</button>
+          </div>
+        </div>
+        <div id="customSetupSummary" class="custom-setup-summary" hidden>
+          <div>
+            <strong id="customSummaryTitle">기본 채소 11종 · 특수 규칙 없음</strong>
+            <span id="customSummaryText">원하는 채소와 판 규칙을 직접 고릅니다.</span>
+          </div>
+          <button id="openCustomSetupBtn" class="button secondary" type="button">구성 편집</button>
+        </div>
+        <div id="roomSlots" class="room-slots"></div>
+        <p id="roomError" class="room-error" role="alert"></p>
+        <div class="room-actions">
+          <button class="button online-button" type="button" disabled>온라인 · 준비 중</button>
+          <button id="startGameBtn" class="button primary" type="button">게임 시작</button>
+        </div>
+      </section>
+    </section>
+
+    <main id="gameShell" class="game-shell" hidden>
+      <section class="topbar" aria-label="게임 정보">
+        <div>
+          <p class="eyebrow">로컬 카드게임</p>
+          <h1>아티초크버리기</h1>
+          <p class="brand-note">정원을 가볍게, 손패는 영리하게</p>
+        </div>
+        <div class="topbar-actions">
+          <button id="soundBtn" class="icon-button sound-on" type="button" aria-label="배경음과 효과음 끄기">♪</button>
+          <button id="newGameBtn" class="button secondary" type="button">새 게임</button>
+          <button id="helpBtn" class="icon-button" type="button" aria-label="도움말">?</button>
+        </div>
+      </section>
+
+      <section class="scoreboard" aria-label="플레이어 상태">
+        <div id="playerPanels" class="player-panels"></div>
+        <article class="turn-panel">
+          <span id="turnBadge">내 턴</span>
+          <strong id="phaseText">수확: 정원 줄에서 카드 1장을 가져오세요.</strong>
+          <p id="statusText">보충한 아티초크 패에서 시작해, 차례 끝에 뽑은 5장 중 아티초크가 없으면 승리합니다.</p>
+          <p id="wildRuleBanner" class="wild-rule-banner" hidden></p>
+        </article>
+      </section>
+
+      <section class="phase-track" aria-label="턴 순서">
+        <div data-step="setup"><span>1</span>보충</div>
+        <div data-step="harvest"><span>2</span>수확</div>
+        <div data-step="play"><span>3</span>사용</div>
+        <div data-step="discard"><span>4</span>버리기</div>
+        <div data-step="draw"><span>5</span>뽑기</div>
+      </section>
+
+      <section id="opponentSeats" class="opponent-seats" aria-label="다른 플레이어 손패와 더미"></section>
+
+      <section class="table">
+        <div class="section-heading">
+          <h2>정원 줄</h2>
+          <span id="gardenHint">수확할 카드</span>
+        </div>
+        <div class="table-felt">
+          <div class="market-pile" aria-label="정원 카드 더미">
+            <span id="gardenDeckCount">19</span>
+            <small>정원 덱</small>
+          </div>
+          <div id="garden" class="card-row garden" aria-label="정원 줄 카드"></div>
+        </div>
+      </section>
+
+      <section class="play-area">
+        <div class="hand-zone">
+          <div class="section-heading">
+            <h2 id="handOwnerName">내 손패</h2>
+            <span id="handHint">사용할 카드</span>
+          </div>
+          <div class="pile-row human-piles" aria-label="현재 플레이어 카드 더미">
+            <div class="pile-stack"><span id="activeDeckStack">5</span><small>덱</small></div>
+            <div class="pile-stack discard"><span id="activeDiscardStack">0</span><small>버림</small></div>
+            <div class="pile-stack buried"><span id="activeBuriedStack">0</span><small>묻음</small></div>
+          </div>
+          <div id="hand" class="card-row hand" aria-label="내 손패"></div>
+          <div class="turn-actions">
+            <button id="endTurnBtn" class="button primary" type="button" disabled>버리기 & 뽑기</button>
+          </div>
+        </div>
+        <aside class="log-panel" aria-label="게임 로그">
+          <div class="section-heading">
+            <h2>로그</h2>
+            <button id="compactLogBtn" class="icon-button small" type="button" aria-label="로그 접기">≡</button>
+          </div>
+          <ol id="logList"></ol>
+        </aside>
+      </section>
+    </main>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <div id="effectLayer" class="effect-layer" role="status" aria-live="polite" hidden>
+      <div id="effectScene" class="effect-scene">
+        <p id="effectEyebrow" class="effect-eyebrow">카드 효과</p>
+        <h2 id="effectTitle">카드 사용</h2>
+        <p id="effectMessage" class="effect-message"></p>
+        <div id="effectCards" class="effect-cards"></div>
+      </div>
+    </div>
+
+    <dialog id="helpDialog">
+      <form method="dialog">
+        <button class="icon-button close" type="submit" aria-label="닫기">×</button>
+        <h2>게임 흐름</h2>
+        <p>각 플레이어는 아티초크 10장으로 시작합니다. 나머지 채소는 종류마다 6장씩 정원 카드 더미에 넣습니다. 수확 단계에는 정원 줄에서 앞면 카드 1장을 골라 손으로 가져옵니다.</p>
+        <p>사용: 손에서 낼 수 있는 카드를 원하는 만큼 냅니다. 카드에 표기된 사항을 모두 이행할 수 있어야 하며, 낸 카드는 따로 지시가 없으면 자기 버린 카드 더미로 갑니다. 묻은 카드는 게임에서 빠집니다.</p>
+        <p>버리기와 뽑기: 남은 손패를 버린 뒤 자기 카드 더미에서 5장을 뽑습니다. 카드 더미가 부족하면 버린 카드 더미를 섞어 새 카드 더미로 만듭니다. 이때 뽑은 5장에 아티초크가 없으면 즉시 승리합니다.</p>
+        <p>변칙 규칙은 기본 채소 11종을 그대로 사용하며 매 판 무작위 특수 규칙 1개가 적용됩니다. 별난 텃밭은 기본 11종과 신규 16종, 총 27종을 후보로 섞은 뒤 이번 판에 사용할 11종을 무작위로 뽑습니다. 커스텀에서는 특수 규칙과 채소 11종을 직접 선택할 수 있습니다. 심기는 같은 이름만 중복할 수 없으며 서로 다른 심기 카드는 함께 예약할 수 있습니다. 파슬리는 새로 받는 와사비·오이·방울양배추만 막으며 이미 예약된 방해와 즉시 처리되는 상대 효과는 막지 않습니다. 점수전 규칙에서는 즉시 승리하지 않고 정해진 라운드가 끝난 뒤 남은 아티초크 수로 순위를 정합니다.</p>
+      </form>
+    </dialog>
+
+    <dialog id="customSetupDialog" class="custom-setup-dialog">
+      <div class="custom-setup-body">
+        <header class="custom-setup-heading">
+          <div>
+            <p class="eyebrow">커스텀 게임</p>
+            <h2>텃밭 구성 편집</h2>
+            <p>특수 규칙과 이번 판에 사용할 채소 11종을 직접 선택합니다.</p>
+          </div>
+          <button id="closeCustomSetupBtn" class="icon-button" type="button" aria-label="커스텀 설정 닫기">×</button>
+        </header>
+        <section class="custom-rule-section" aria-labelledby="customRuleTitle">
+          <div class="custom-section-heading">
+            <h3 id="customRuleTitle">판 특수 규칙</h3>
+          </div>
+          <select id="customRuleSelect" aria-label="판 특수 규칙"></select>
+          <p id="customRuleDescription" class="custom-rule-description"></p>
+        </section>
+        <section class="custom-vegetable-section" aria-labelledby="customVegetableTitle">
+          <div class="custom-section-heading">
+            <div>
+              <h3 id="customVegetableTitle">채소 선택</h3>
+              <p><strong id="customVegetableCount">11</strong>/11종 선택</p>
+            </div>
+            <div class="custom-preset-actions">
+              <button id="customBasePresetBtn" class="button secondary" type="button">기본 11종</button>
+              <button id="customRandomPresetBtn" class="button secondary" type="button">무작위 11종</button>
+            </div>
+          </div>
+          <div id="customVegetableGrid" class="custom-vegetable-grid"></div>
+        </section>
+        <p id="customSetupError" class="custom-setup-error" role="alert"></p>
+        <footer class="custom-setup-actions">
+          <button id="cancelCustomSetupBtn" class="button secondary" type="button">취소</button>
+          <button id="applyCustomSetupBtn" class="button primary" type="button">이 구성 사용</button>
+        </footer>
+      </div>
+    </dialog>
+
+    <dialog id="choiceDialog" class="choice-dialog">
+      <div class="choice-dialog-body">
+        <div>
+          <p class="eyebrow">카드 효과</p>
+          <h2 id="choiceTitle">카드 선택</h2>
+          <p id="choiceMessage"></p>
+        </div>
+        <div id="choiceOptions" class="choice-options"></div>
+        <div class="choice-actions">
+          <button id="choiceConfirmBtn" class="button primary" type="button" disabled>선택 완료</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="handoffDialog" class="handoff-dialog">
+      <div class="handoff-body">
+        <p class="eyebrow">로컬 플레이</p>
+        <h2><span id="handoffPlayerName"></span>님의 차례</h2>
+        <p id="handoffMessage">다른 플레이어는 화면을 보지 않도록 한 뒤 손패를 확인하세요.</p>
+        <button id="handoffConfirmBtn" class="button primary" type="button">손패 보기</button>
+      </div>
+    </dialog>
+
+    <dialog id="resultDialog" class="result-dialog">
+      <div class="result-body">
+        <div class="result-heading">
+          <img src="assets/cards/artichoke.png" alt="" aria-hidden="true">
+          <p class="eyebrow">게임 종료</p>
+          <h2 id="resultWinnerName">승리!</h2>
+          <p id="resultSummary"></p>
+        </div>
+        <div id="resultList" class="result-list" aria-label="최종 결과"></div>
+        <div class="result-actions">
+          <button id="resultLobbyBtn" class="button secondary" type="button">방 설정</button>
+          <button id="resultRematchBtn" class="button primary" type="button">같은 설정으로 재대결</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="matchCardsDialog" class="match-cards-dialog">
+      <div class="match-cards-body">
+        <div>
+          <p id="matchCardsModeLabel" class="eyebrow">확장 · 별난 텃밭</p>
+          <h2>이번 판 채소</h2>
+          <p id="matchCardsRule"></p>
+        </div>
+        <div id="matchCardsGrid" class="match-cards-grid"></div>
+        <button id="matchCardsConfirmBtn" class="button primary" type="button">정원으로</button>
+      </div>
+    </dialog>
+
+  <script src="game.js?v=26"></script>
+  <script src="pwa.js?v=1"></script>
+  </body>
+</html>

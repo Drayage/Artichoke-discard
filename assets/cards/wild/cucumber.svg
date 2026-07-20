@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 192">
+  <defs><filter id="s"><feDropShadow dx="0" dy="7" stdDeviation="5" flood-opacity=".22"/></filter></defs>
+  <g filter="url(#s)" transform="rotate(-12 128 96)"><rect x="35" y="68" width="186" height="66" rx="33" fill="#4f9966" stroke="#32724d" stroke-width="5"/><path d="M58 88h139M64 113h130" stroke="#78b984" stroke-width="6" stroke-linecap="round"/><g fill="#d7e98b"><circle cx="81" cy="98" r="3"/><circle cx="111" cy="83" r="3"/><circle cx="142" cy="116" r="3"/><circle cx="174" cy="94" r="3"/></g></g>
+</svg>
