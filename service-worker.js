@@ -1,4 +1,4 @@
-const CACHE_NAME = "artichoke-discard-v1";
+const CACHE_NAME = "artichoke-discard-v2";
 const APP_SHELL = [
   "./",
   "./index.html",

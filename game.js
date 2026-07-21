@@ -112,11 +112,11 @@ Object.assign(CARD_LIBRARY, {
   bean_sprouts: { name: "콩나물", english: "BEAN SPROUTS", art: "assets/cards/wild/bean-sprouts.png", accent: "#9dbb72", text: "내 덱 위 2장을 공개합니다. 아티초크가 있으면 1장을 손에 넣고, 없다면 원하는 1장을 손에 넣습니다. 나머지는 버립니다.", type: "vegetable", expansion: true },
   asparagus: { name: "아스파라거스", english: "ASPARAGUS", art: "assets/cards/wild/asparagus.png", accent: "#4b8c62", text: "심기(내 앞에 아스파라거스 중복 불가). 다음 내 차례 시작에 손의 아티초크 1장을 묻고 이 카드를 버립니다.", type: "vegetable", expansion: true },
   sweet_potato: { name: "고구마", english: "SWEET POTATO", art: "assets/cards/wild/sweet-potato.png", accent: "#9b654f", text: "심기(내 앞에 고구마 중복 불가). 다음 내 차례 시작에 덱 위 3장 중 채소가 있으면 1장을 손에 넣고 이 카드를 버립니다.", type: "vegetable", expansion: true },
-  wasabi: { name: "와사비", english: "WASABI", art: "assets/cards/wild/wasabi.png", accent: "#7aab4c", text: "상대 1명에게 예약(대상별 와사비 중복 불가). 다음 차례 채소를 최대 2장만 쓰며, 발동 후 이 카드를 버립니다.", type: "vegetable", expansion: true },
-  cucumber: { name: "오이", english: "CUCUMBER", art: "assets/cards/wild/cucumber.png", accent: "#4f9c70", text: "상대 1명에게 예약(대상별 오이 중복 불가). 다음 차례 수확 카드가 무작위로 정해지며, 발동 후 이 카드를 버립니다.", type: "vegetable", expansion: true },
-  brussels_sprout: { name: "방울양배추", english: "BRUSSELS SPROUT", art: "assets/cards/wild/brussels-sprout.png", accent: "#5d8d4e", text: "상대 1명에게 예약(대상별 중복 불가). 다음 차례 시작에 무작위 패 1장을 버리고 1장 뽑은 뒤 이 카드를 버립니다.", type: "vegetable", expansion: true },
+  wasabi: { name: "와사비", english: "WASABI", art: "assets/cards/wild/wasabi.png", accent: "#7aab4c", text: "나를 제외한 모든 플레이어에게 예약합니다(대상별 와사비 중복 불가). 다음 차례 채소를 최대 2장만 쓰며, 모두 발동한 뒤 이 카드를 버립니다.", type: "vegetable", expansion: true },
+  cucumber: { name: "오이", english: "CUCUMBER", art: "assets/cards/wild/cucumber.png", accent: "#4f9c70", text: "나를 제외한 모든 플레이어에게 예약합니다(대상별 오이 중복 불가). 다음 차례 수확 카드가 무작위로 정해지며, 모두 발동한 뒤 이 카드를 버립니다.", type: "vegetable", expansion: true },
+  brussels_sprout: { name: "방울양배추", english: "BRUSSELS SPROUT", art: "assets/cards/wild/brussels-sprout.png", accent: "#5d8d4e", text: "나를 제외한 모든 플레이어에게 예약합니다(대상별 중복 불가). 다음 차례 시작에 무작위 패 1장을 버리고 1장 뽑으며, 모두 발동한 뒤 이 카드를 버립니다.", type: "vegetable", expansion: true },
   celery: { name: "셀러리", english: "CELERY", art: "assets/cards/wild/celery.png", accent: "#79a96c", text: "상대 덱 위 2장을 공개하고 원하는 순서로 되돌립니다.", type: "vegetable", expansion: true },
-  parsley: { name: "파슬리", english: "PARSLEY", art: "assets/cards/wild/parsley.png", accent: "#4f8a4d", text: "손에 있으면 새 와사비·오이·방울양배추만 무효화하며, 이미 예약된 방해는 유지됩니다. 사용하면 내 덱 위 1장을 유지하거나 버립니다.", type: "vegetable", expansion: true },
+  parsley: { name: "파슬리", english: "PARSLEY", art: "assets/cards/wild/parsley.png", accent: "#4f8a4d", text: "손에 있으면 새 와사비·오이·방울양배추와 리크·셀러리·치커리의 직접 방해를 무효화합니다. 교환·전달 효과와 이미 예약된 방해는 막지 않습니다. 사용하면 내 덱 위 1장을 유지하거나 버립니다.", type: "vegetable", expansion: true },
   chicory: { name: "치커리", english: "CHICORY", art: "assets/cards/wild/chicory.png", accent: "#6c79a9", text: "손에 아티초크가 2장 이하인 모든 플레이어는 묻은 아티초크 1장을 손으로 되돌립니다.", type: "vegetable", expansion: true }
 });
 
@@ -124,6 +124,7 @@ const EXPANSION_CARD_IDS = Object.keys(CARD_LIBRARY).filter((id) => CARD_LIBRARY
 const ALL_GARDEN_CARD_IDS = [...BASE_GARDEN_CARD_IDS, ...EXPANSION_CARD_IDS];
 const MUSHROOM_COPY_IDS = ["potato", "leek", "broccoli", "beet", "peas", "tomato", "bean_sprouts", "celery", "parsley", "chicory"];
 const GARDEN_CARD_IDS = [...BASE_GARDEN_CARD_IDS];
+const PARSLEY_BLOCKED_EFFECT_IDS = new Set(["leek", "wasabi", "cucumber", "brussels_sprout", "celery", "chicory"]);
 const COMPACT_RULES = {
   artichoke: "단독으로 낼 수 없습니다.",
   eggplant: "아티초크 1장과 묻고, 모두 왼쪽에 카드 2장을 넘깁니다.",
@@ -152,18 +153,18 @@ Object.assign(COMPACT_RULES, {
   bean_sprouts: "덱 위 2장: 아티초크 우선, 없으면 1장을 고릅니다.",
   asparagus: "심기(내 앞에 동일 카드 중복 불가). 다음 내 턴에 아티초크 1장을 묻고 버립니다.",
   sweet_potato: "심기(내 앞에 동일 카드 중복 불가). 다음 내 턴 덱 위 3장에 채소가 있으면 1장을 얻습니다.",
-  wasabi: "상대에게 예약(대상별 중복 불가). 다음 턴 채소 2장 제한 후 내 버림.",
-  cucumber: "상대에게 예약(대상별 중복 불가). 다음 수확 무작위 후 내 버림.",
-  brussels_sprout: "상대에게 예약(대상별 중복 불가). 다음 턴 패 1장 교체 후 내 버림.",
+  wasabi: "모든 상대에게 예약(대상별 중복 불가). 다음 턴 채소 2장 제한.",
+  cucumber: "모든 상대에게 예약(대상별 중복 불가). 다음 수확 무작위.",
+  brussels_sprout: "모든 상대에게 예약(대상별 중복 불가). 다음 턴 패 1장 교체.",
   celery: "상대 덱 위 2장을 원하는 순서로 되돌립니다.",
-  parsley: "손에 있으면 새 와사비·오이·방울양배추만 무효(기예약 유지). 사용: 덱 위 1장 유지/버림.",
+  parsley: "손에 있으면 직접 방해 무효(교환·전달·기예약 제외). 사용: 덱 위 1장 유지/버림.",
   chicory: "패에 아티초크 2장 이하인 모두가 묻은 1장을 되찾습니다."
 });
 
 const SPECIAL_RULES = {
   abundant: { name: "풍년", text: "정원 줄을 7장으로 유지합니다." },
   small_garden: { name: "작은 텃밭", text: "정원 줄이 3장뿐입니다." },
-  market_day: { name: "장날", text: "수확할 카드 2장을 고른 뒤 1장만 손에 넣습니다." },
+  market_day: { name: "장날", text: "수확할 때 정원 줄에서 카드 2장을 골라 모두 손에 넣습니다." },
   crop_rotation: { name: "돌려짓기", text: "라운드가 끝날 때마다 정원 줄을 모두 교체합니다." },
   compost_bonus: { name: "퇴비 보너스", text: "각 차례에 처음 카드를 묻으면 카드 1장을 뽑습니다." },
   mutual_aid: { name: "품앗이", text: "각 차례 첫 채소는 효과 후 왼쪽 플레이어의 버림 더미로 갑니다." },
@@ -197,7 +198,8 @@ const state = {
   visibleHandPlayerId: null,
   turnLocked: false,
   cardsPlayedThisTurn: 0,
-  firstBuryBonusUsed: false
+  firstBuryBonusUsed: false,
+  statusSequence: 0
 };
 
 let customSetup = {
@@ -362,6 +364,7 @@ function setupGame(playerConfigs, gameOptions = state.gameOptions) {
   state.gameOver = false;
   state.winnerId = null;
   state.turn = 1;
+  state.statusSequence = 0;
   state.actionPending = false;
   state.handoffPending = false;
   state.visibleHandPlayerId = state.players[0].controller === "local" ? state.players[0].id : null;
@@ -1080,12 +1083,9 @@ async function takeGardenCard(index) {
   const hasCucumber = cucumberIndex !== null;
   const harvested = [];
   if (state.gameOptions.specialRuleId === "market_day" && !hasCucumber && state.garden.length >= 2) {
-    await showSpecialRuleScene("market_day", "정원 카드 2장을 비교해 1장만 수확합니다.", 650);
-    const indices = await chooseCards(state.garden, 2, "장날", "비교할 정원 카드 2장을 고르세요.");
-    const candidates = removeCardsAt(state.garden, indices);
-    const keepIndex = (await chooseCards(candidates, 1, "장날", "손으로 가져올 카드 1장을 고르세요."))[0];
-    harvested.push(candidates.splice(keepIndex, 1)[0]);
-    state.gardenDeck.unshift(...candidates);
+    await showSpecialRuleScene("market_day", "정원 카드 2장을 골라 모두 수확합니다.", 650);
+    const indices = await chooseCards(state.garden, 2, "장날", "손으로 가져올 정원 카드 2장을 고르세요.");
+    harvested.push(...removeCardsAt(state.garden, indices));
   } else {
     const resolvedIndex = hasCucumber ? cucumberIndex : index;
     harvested.push(state.garden.splice(resolvedIndex, 1)[0]);
@@ -1276,6 +1276,10 @@ async function resolveCarrot(player) {
 async function resolveLeek(player) {
   const candidates = opponentsOf(player).filter((target) => availableDrawCount(target) > 0);
   const target = await chooseOpponent(player, candidates, "리크 효과를 적용할 상대를 고르세요.");
+  if (parsleyBlocks(target, "leek")) {
+    await showParsleyBlock(target, "leek");
+    return;
+  }
   const revealed = takeTopCard(target);
   if (!revealed) return;
   await showEffectScene({
@@ -1461,9 +1465,35 @@ function plantStatus(owner, target, cardId, type) {
   target.statuses.push({ type, cardId, sourcePlayerId: owner.id });
 }
 
+function plantSharedStatus(owner, targets, cardId, type) {
+  removeFirst(owner.played, cardId);
+  const statusGroupId = `${owner.id}-${cardId}-${state.turn}-${state.statusSequence += 1}`;
+  targets.forEach((target) => {
+    target.statuses.push({ type, cardId, sourcePlayerId: owner.id, statusGroupId });
+  });
+}
+
 function returnStatusCard(status, destination = "discard") {
+  if (status.statusGroupId && state.players.some((player) =>
+    player.statuses.some((candidate) => candidate.statusGroupId === status.statusGroupId))) return;
   const source = playerById(status.sourcePlayerId);
   if (source) source[destination].push(status.cardId);
+}
+
+function parsleyBlocks(target, cardId) {
+  return PARSLEY_BLOCKED_EFFECT_IDS.has(cardId) && target.hand.includes("parsley");
+}
+
+async function showParsleyBlock(target, cardId) {
+  await showEffectScene({
+    eyebrow: `${target.name} 방어`,
+    title: "파슬리 · 직접 방해 무효",
+    message: `${CARD_LIBRARY[cardId].name} 효과가 ${target.name}에게 적용되지 않습니다.`,
+    cards: [{ id: cardId, label: "무효" }, { id: "parsley", label: `${target.name} 손패` }],
+    variant: "reveal-pair",
+    duration: 1000
+  });
+  log(`${target.name}의 파슬리가 ${CARD_LIBRARY[cardId].name}의 직접 방해를 막았습니다.`);
 }
 
 async function resolveExpansionCard(player, cardId) {
@@ -1565,28 +1595,27 @@ async function resolveExpansionCard(player, cardId) {
 
   if (["wasabi", "cucumber", "brussels_sprout"].includes(cardId)) {
     const candidates = opponentsOf(player).filter((target) => !target.statuses.some((status) => status.type === cardId));
-    const target = await chooseOpponent(player, candidates, `${CARD_LIBRARY[cardId].name} 효과를 적용할 상대를 고르세요.`);
-    if (target.hand.includes("parsley")) {
-      moveCard(player.played, player.discard, cardId);
-      await showEffectScene({
-        eyebrow: `${target.name} 방어`,
-        title: "파슬리 · 방해 무효",
-        message: `${CARD_LIBRARY[cardId].name} 효과가 적용되지 않습니다.`,
-        cards: [{ id: cardId, label: "무효" }, { id: "parsley", label: `${target.name} 손패` }],
-        variant: "reveal-pair",
-        duration: 1000
-      });
-      log(`${target.name}의 손에 파슬리가 있어 ${CARD_LIBRARY[cardId].name} 방해 효과가 무효화됐습니다.`);
-      return;
+    const protectedTargets = candidates.filter((target) => parsleyBlocks(target, cardId));
+    const affectedTargets = candidates.filter((target) => !parsleyBlocks(target, cardId));
+    for (const target of protectedTargets) {
+      await showParsleyBlock(target, cardId);
     }
-    plantStatus(player, target, cardId, cardId);
-    log(`${target.name}에게 ${CARD_LIBRARY[cardId].name} 예약 효과가 걸렸습니다.`);
+    if (affectedTargets.length > 0) {
+      plantSharedStatus(player, affectedTargets, cardId, cardId);
+      log(`${affectedTargets.map((target) => target.name).join(", ")}에게 ${CARD_LIBRARY[cardId].name} 예약 효과가 걸렸습니다.`);
+    } else {
+      moveCard(player.played, player.discard, cardId);
+    }
     return;
   }
 
   if (cardId === "celery") {
     const candidates = opponentsOf(player).filter((target) => availableDrawCount(target) >= 2);
     const target = await chooseOpponent(player, candidates, "덱 위를 바꿀 상대를 고르세요.");
+    if (parsleyBlocks(target, "celery")) {
+      await showParsleyBlock(target, "celery");
+      return;
+    }
     const revealed = [takeTopCard(target), takeTopCard(target)].filter(Boolean);
     await showEffectScene({ title: `${target.name} 덱 위`, cards: revealed, variant: "reveal-pair", duration: 850 });
     const topIndex = player.controller === "local" ? (await chooseCards(revealed, 1, "셀러리", "맨 위에 놓을 카드를 고르세요."))[0] : revealed.findIndex((id) => id === "artichoke");
@@ -1624,14 +1653,22 @@ async function resolveExpansionCard(player, cardId) {
 
   if (cardId === "chicory") {
     const returned = [];
+    const blocked = [];
     state.players.forEach((target) => {
       if (artichokesInHand(target) > 2) return;
       const buriedIndex = target.buried.lastIndexOf("artichoke");
       if (buriedIndex < 0) return;
+      if (target.id !== player.id && parsleyBlocks(target, "chicory")) {
+        blocked.push(target);
+        return;
+      }
       target.buried.splice(buriedIndex, 1);
       target.hand.push("artichoke");
       returned.push({ id: "artichoke", label: target.name });
     });
+    for (const target of blocked) {
+      await showParsleyBlock(target, "chicory");
+    }
     await showEffectScene({
       title: "묻은 아티초크의 귀환",
       message: returned.length > 0
@@ -1971,13 +2008,10 @@ async function harvestForAi(player) {
   const cucumberIndex = await consumeCucumberHarvest(player);
   const randomHarvest = cucumberIndex !== null;
   if (state.gameOptions.specialRuleId === "market_day" && !randomHarvest && state.garden.length >= 2) {
-    await showSpecialRuleScene("market_day", `${player.name}이(가) 카드 2장을 비교해 1장만 수확합니다.`, 650);
+    await showSpecialRuleScene("market_day", `${player.name}이(가) 정원 카드 2장을 수확합니다.`, 650);
     const ranked = state.garden.map((id, index) => ({ id, index, score: aiCardPriority(id) })).sort((a, b) => b.score - a.score).slice(0, 2);
     const indices = ranked.map(({ index }) => index);
-    const candidates = removeCardsAt(state.garden, indices);
-    const keepIndex = chooseBestCardIndex(candidates);
-    harvested.push(candidates.splice(keepIndex, 1)[0]);
-    state.gardenDeck.unshift(...candidates);
+    harvested.push(...removeCardsAt(state.garden, indices));
   } else {
     const index = randomHarvest ? cucumberIndex : chooseGardenCardForAi(player);
     harvested.push(state.garden.splice(index, 1)[0]);
