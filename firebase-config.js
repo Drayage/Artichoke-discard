@@ -3,11 +3,11 @@
 // initializeApp에서 실패하므로, 온라인 기능을 실제로 켜려면 아래 값을 채우고
 // Firebase 콘솔의 Realtime Database 규칙에 database.rules.snippet.json 내용을 병합하세요.
 export const FIREBASE_CONFIG = {
-  // apiKey: "...",
-  // authDomain: "...",
-  // databaseURL: "...",
-  // projectId: "...",
-  // storageBucket: "...",
-  // messagingSenderId: "...",
-  // appId: "..."
+  apiKey: "AIzaSyByKyy7PYBIMi2K1jxH6KmzfWbE2_SsB5A",
+  authDomain: "deadline-38cdb.firebaseapp.com",
+  databaseURL: "https://deadline-38cdb-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "deadline-38cdb",
+  storageBucket: "deadline-38cdb.firebasestorage.app",
+  messagingSenderId: "768255871086",
+  appId: "1:768255871086:web:ad7713b5a3b8e01f9cbe7f"
 };
