@@ -13,7 +13,7 @@
     <link rel="manifest" href="manifest.webmanifest">
     <link rel="icon" type="image/png" sizes="192x192" href="assets/icons/icon-192.png">
     <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
-    <link rel="stylesheet" href="styles.css?v=26">
+    <link rel="stylesheet" href="styles.css?v=27">
   </head>
   <body>
     <section id="titleScreen" class="title-screen">
@@ -64,7 +64,7 @@
         <div id="roomSlots" class="room-slots"></div>
         <p id="roomError" class="room-error" role="alert"></p>
         <div class="room-actions">
-          <button class="button online-button" type="button" disabled>온라인 · 준비 중</button>
+          <button id="onlineButton" class="button online-button" type="button">온라인</button>
           <button id="startGameBtn" class="button primary" type="button">게임 시작</button>
         </div>
       </section>
@@ -241,6 +241,47 @@
       </div>
     </dialog>
 
+    <dialog id="onlineDialog" class="online-dialog">
+      <div class="online-dialog-body">
+        <header class="online-dialog-heading">
+          <div>
+            <p class="eyebrow">온라인 대전</p>
+            <h2>온라인으로 함께하기</h2>
+          </div>
+          <button id="closeOnlineDialogBtn" class="icon-button" type="button" aria-label="닫기">×</button>
+        </header>
+        <div id="onlineTabs" class="segmented online-tabs" aria-label="온라인 방식">
+          <button type="button" data-tab="host" class="active">방 만들기</button>
+          <button type="button" data-tab="join">코드로 참가</button>
+        </div>
+        <section id="onlineHostPanel" class="online-panel">
+          <p class="online-hint">방 설정의 좌석 종류에서 "온라인 참가자"로 지정한 자리에, 참가자가 아래 코드로 들어옵니다.</p>
+          <button id="onlineCreateRoomBtn" class="button primary" type="button">방 만들기</button>
+          <div id="onlineRoomInfo" class="online-room-info" hidden>
+            <div class="online-code-row">
+              <span id="onlineRoomCode" class="online-code"></span>
+              <button id="onlineCopyCodeBtn" class="button secondary" type="button">코드 복사</button>
+            </div>
+            <ul id="onlineRoster" class="online-roster"></ul>
+            <button id="onlineLeaveHostBtn" class="button secondary" type="button">방 닫기</button>
+          </div>
+        </section>
+        <section id="onlineJoinPanel" class="online-panel" hidden>
+          <label class="online-field">
+            <span>참가 코드</span>
+            <input id="onlineJoinCode" type="text" maxlength="8" placeholder="예: AB23C" autocapitalize="characters">
+          </label>
+          <label class="online-field">
+            <span>내 이름</span>
+            <input id="onlineJoinName" type="text" maxlength="12" placeholder="이름 입력">
+          </label>
+          <button id="onlineJoinBtn" class="button primary" type="button">참가하기</button>
+          <p id="onlineJoinStatus" class="online-hint"></p>
+        </section>
+        <p id="onlineError" class="room-error" role="alert"></p>
+      </div>
+    </dialog>
+
     <dialog id="matchCardsDialog" class="match-cards-dialog">
       <div class="match-cards-body">
         <div>
@@ -253,7 +294,8 @@
       </div>
     </dialog>
 
-  <script src="game.js?v=27"></script>
+  <script type="module" src="net.js?v=1"></script>
+  <script src="game.js?v=28"></script>
   <script src="pwa.js?v=1"></script>
   </body>
 </html>

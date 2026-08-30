@@ -1632,6 +1632,110 @@ dialog form {
   margin-top: 8px;
 }
 
+.online-dialog {
+  width: min(460px, calc(100% - 28px));
+}
+
+.online-dialog-body {
+  display: grid;
+  gap: 16px;
+  padding: 26px;
+}
+
+.online-dialog-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.online-dialog-heading h2 {
+  font-size: 1.3rem;
+}
+
+.online-dialog-heading .icon-button {
+  flex: 0 0 auto;
+}
+
+.online-tabs {
+  grid-template-columns: repeat(2, 1fr);
+  width: 100%;
+}
+
+.online-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.online-panel[hidden] {
+  display: none;
+}
+
+.online-hint {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.online-room-info {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.online-code-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid rgba(229, 184, 94, 0.3);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: rgba(229, 184, 94, 0.08);
+}
+
+.online-code {
+  color: var(--gold);
+  font-size: 1.4rem;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+}
+
+.online-roster {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+}
+
+.online-roster li {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.online-field {
+  display: grid;
+  gap: 6px;
+  font-size: 0.8rem;
+  font-weight: 900;
+  color: var(--muted);
+}
+
+.online-field input {
+  height: 43px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 11px;
+  background: rgba(7, 11, 8, 0.38);
+  color: var(--ink);
+  font: inherit;
+}
+
 .result-dialog {
   width: min(680px, calc(100% - 28px));
   border-color: rgba(229, 184, 94, 0.42);

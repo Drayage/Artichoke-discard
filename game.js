@@ -202,6 +202,24 @@ const state = {
   statusSequence: 0
 };
 
+// 온라인 모드 메타데이터. game.js가 다루는 위 state와 달리 net 아래 값은
+// 네트워크 동기화 대상이 아니다(호스트가 보내는 redactStateForPlayer 결과에는 포함되지 않음).
+// role: "host"면 이 탭이 게임 로직의 유일한 권위자, "guest"면 호스트가 보내는 뷰를 그리기만 한다.
+state.net = {
+  role: null, // "host" | "guest" | null(오프라인)
+  roomCode: null,
+  myPlayerId: null, // 이 탭이 조작하는 좌석의 player-N id (호스트 자신 좌석 또는 게스트에게 배정된 좌석)
+  seq: 0, // 호스트가 마지막으로 성공시킨 writeState의 결과 seq
+  promptSeq: 0, // 호스트가 원격 플레이어에게 보낸 선택 요청 일련번호
+  activePrompts: {}, // playerId -> 현재 응답 대기 중인 선택 요청
+  lastAppliedActionSeq: {}, // playerId -> 호스트가 마지막으로 적용한 액션 seq(중복 적용 방지)
+  remoteAssignments: {}, // "player-N" 좌석 id -> 배정된 게스트 id (호스트만 사용)
+  unsubscribeRoom: null,
+  unsubscribeView: null,
+  lastGuestPromptSeq: 0,
+  guestGameOver: false
+};
+
 let customSetup = {
   specialRuleId: null,
   gardenCardIds: [...BASE_GARDEN_CARD_IDS]
@@ -283,7 +301,24 @@ const els = {
   matchCardsModeLabel: document.querySelector("#matchCardsModeLabel"),
   matchCardsRule: document.querySelector("#matchCardsRule"),
   matchCardsGrid: document.querySelector("#matchCardsGrid"),
-  matchCardsConfirm: document.querySelector("#matchCardsConfirmBtn")
+  matchCardsConfirm: document.querySelector("#matchCardsConfirmBtn"),
+  onlineButton: document.querySelector("#onlineButton"),
+  onlineDialog: document.querySelector("#onlineDialog"),
+  closeOnlineDialog: document.querySelector("#closeOnlineDialogBtn"),
+  onlineTabs: document.querySelector("#onlineTabs"),
+  onlineHostPanel: document.querySelector("#onlineHostPanel"),
+  onlineJoinPanel: document.querySelector("#onlineJoinPanel"),
+  onlineCreateRoom: document.querySelector("#onlineCreateRoomBtn"),
+  onlineRoomInfo: document.querySelector("#onlineRoomInfo"),
+  onlineRoomCode: document.querySelector("#onlineRoomCode"),
+  onlineCopyCode: document.querySelector("#onlineCopyCodeBtn"),
+  onlineRoster: document.querySelector("#onlineRoster"),
+  onlineLeaveHost: document.querySelector("#onlineLeaveHostBtn"),
+  onlineJoinCode: document.querySelector("#onlineJoinCode"),
+  onlineJoinName: document.querySelector("#onlineJoinName"),
+  onlineJoin: document.querySelector("#onlineJoinBtn"),
+  onlineJoinStatus: document.querySelector("#onlineJoinStatus"),
+  onlineError: document.querySelector("#onlineError")
 };
 
 let toastTimer = 0;
@@ -293,6 +328,36 @@ let lastPlayerVisualState = new Map();
 let musicStep = 0;
 let autoTurnTimer = 0;
 let privateHandoffResolver = null;
+let pendingRemoteChoice = null; // { playerId, promptSeq, resolve }
+
+// "이 탭에서 지금 조작할 수 있는 좌석인가?"
+// 호스트 탭: 물리적으로 이 화면을 보는 사람은 "local" 좌석뿐이다(원격 좌석은 손님의 기기에 있음).
+// 게스트 탭: state.players의 controller 값은 항상 "remote"지만, 그중 자신에게 배정된 좌석만 조작 가능.
+function isSelfSeat(player) {
+  if (!player) return false;
+  if (state.net.role === "guest") return player.id === state.net.myPlayerId;
+  return player.controller === "local";
+}
+
+function controllerLabel(controller) {
+  if (controller === "ai") return "AI";
+  if (controller === "remote") return "온라인";
+  return "로컬";
+}
+
+// "local"과 "remote"는 둘 다 사람이 직접 선택하는 좌석이다(하나는 이 기기, 하나는 네트워크 너머).
+// 호스트 탭의 진행 함수(takeGardenCard 등)는 이 둘을 동일하게 취급하고,
+// "누구의 화면에 다이얼로그를 띄울지"는 chooseCards류의 개별 분기에서만 갈린다.
+function isHumanTurnController(controller) {
+  return controller === "local" || controller === "remote";
+}
+
+// local(이 기기 다이얼로그)과 remote(네트워크 참가자 다이얼로그)를 함께 다루는
+// "정원 카드 N장 선택" 헬퍼. takeGardenCard 안의 장날/충동구매 처리에 쓴다.
+function chooseCardsForPlayer(player, cards, count, title, message, behavior = {}) {
+  if (player.controller === "remote") return chooseCardsRemote(player, cards, count, title, message);
+  return chooseCards(cards, count, title, message, behavior);
+}
 
 // 온라인 모드에서는 서버가 제공하는 난수 함수로 이 경계만 교체하면 됩니다.
 function randomValue() {
@@ -581,19 +646,23 @@ function renderRoomSlots(count, previous = readRoomSlots()) {
       <select aria-label="${index + 1}번 플레이어 종류">
         <option value="local"${slot.controller === "local" ? " selected" : ""}>로컬</option>
         <option value="ai"${slot.controller === "ai" ? " selected" : ""}>AI</option>
+        <option value="remote"${slot.controller === "remote" ? " selected" : ""}>온라인 참가자</option>
       </select>
     `;
     row.querySelector("select").addEventListener("change", (event) => {
       const input = row.querySelector("input");
       if (event.target.value === "ai" && /^플레이어 \d+$/.test(input.value)) input.value = `AI ${index + 1}`;
       if (event.target.value === "local" && /^AI \d+$/.test(input.value)) input.value = `플레이어 ${index + 1}`;
+      if (event.target.value === "remote" && !/^온라인/.test(input.value)) input.value = `온라인 ${index + 1}`;
       els.roomError.textContent = "";
+      syncOnlineDialogFromSlots();
     });
     els.roomSlots.append(row);
   }
 }
 
 function startConfiguredGame() {
+  if (state.net.role === "guest") return; // 게스트는 게임을 시작할 권한이 없다(호스트만 시작)
   const configs = readRoomSlots();
   if (!configs.some((player) => player.controller === "local")) {
     els.roomError.textContent = "최소 1명은 로컬 플레이어여야 합니다.";
@@ -603,15 +672,35 @@ function startConfiguredGame() {
     els.roomError.textContent = "플레이어 이름을 서로 다르게 설정해 주세요.";
     return;
   }
+  const remoteSeatCount = configs.filter((player) => player.controller === "remote").length;
+  if (state.net.role === "host") {
+    const joinedCount = Object.keys(state.net.remoteAssignments ?? {}).length;
+    if (remoteSeatCount === 0) {
+      els.roomError.textContent = "온라인 방에서는 온라인 참가자 좌석을 최소 1개 지정하세요.";
+      return;
+    }
+    if (joinedCount < remoteSeatCount) {
+      els.roomError.textContent = `온라인 참가자가 아직 부족합니다 (${joinedCount}/${remoteSeatCount}명 입장).`;
+      return;
+    }
+  } else if (remoteSeatCount > 0) {
+    els.roomError.textContent = "온라인 참가자 좌석을 사용하려면 먼저 온라인 방을 만들어 주세요.";
+    return;
+  }
   els.roomError.textContent = "";
   const mode = els.gameModeControl.querySelector("button.active")?.dataset.mode ?? "classic";
-  setupGame(configs, mode === "custom"
+  const options = mode === "custom"
     ? {
       mode,
       specialRuleId: customSetup.specialRuleId,
       gardenCardIds: [...customSetup.gardenCardIds]
     }
-    : { mode });
+    : { mode };
+  if (state.net.role === "host") {
+    configs.forEach((config, seat) => { config.assignedGuestId = state.net.remoteAssignments?.[`player-${seat + 1}`] ?? null; });
+    window.ArtichokeNet.updateRoom(state.net.roomCode, { phase: "playing" }).catch(() => {});
+  }
+  setupGame(configs, options);
 }
 
 function resetTurnState() {
@@ -1077,14 +1166,19 @@ function canPlay(player, cardId) {
 
 async function takeGardenCard(index) {
   const player = activePlayer();
-  if (state.gameOver || state.actionPending || state.handoffPending || state.phase !== "harvest" || player.controller !== "local") return;
+  if (state.net.role === "guest") {
+    if (state.gameOver || state.handoffPending || state.phase !== "harvest" || !isSelfSeat(player)) return;
+    sendNetAction("harvest", { index });
+    return;
+  }
+  if (state.gameOver || state.actionPending || state.handoffPending || state.phase !== "harvest" || !isHumanTurnController(player.controller)) return;
   state.actionPending = true;
   const cucumberIndex = await consumeCucumberHarvest(player);
   const hasCucumber = cucumberIndex !== null;
   const harvested = [];
   if (state.gameOptions.specialRuleId === "market_day" && !hasCucumber && state.garden.length >= 2) {
     await showSpecialRuleScene("market_day", "정원 카드 2장을 골라 모두 수확합니다.", 650);
-    const indices = await chooseCards(state.garden, 2, "장날", "손으로 가져올 정원 카드 2장을 고르세요.");
+    const indices = await chooseCardsForPlayer(player, state.garden, 2, "장날", "손으로 가져올 정원 카드 2장을 고르세요.");
     harvested.push(...removeCardsAt(state.garden, indices));
   } else {
     const resolvedIndex = hasCucumber ? cucumberIndex : index;
@@ -1092,13 +1186,13 @@ async function takeGardenCard(index) {
   }
   if (state.gameOptions.specialRuleId === "impulse_buying" && state.garden.length > 0) {
     await showSpecialRuleScene("impulse_buying", "정원 카드 1장을 더 가져온 뒤 손패 1장을 버립니다.", 650);
-    const extraIndex = (await chooseCards(state.garden, 1, "충동구매", "추가로 가져올 정원 카드 1장을 고르세요."))[0];
+    const extraIndex = (await chooseCardsForPlayer(player, state.garden, 1, "충동구매", "추가로 가져올 정원 카드 1장을 고르세요."))[0];
     harvested.push(state.garden.splice(extraIndex, 1)[0]);
   }
   player.hand.push(...harvested);
   refillGarden();
   if (state.gameOptions.specialRuleId === "impulse_buying") {
-    const discardIndex = (await chooseCards(player.hand, 1, "충동구매", "손에서 버릴 카드 1장을 고르세요."))[0];
+    const discardIndex = (await chooseCardsForPlayer(player, player.hand, 1, "충동구매", "손에서 버릴 카드 1장을 고르세요."))[0];
     player.discard.push(player.hand.splice(discardIndex, 1)[0]);
   }
   state.phase = "play";
@@ -1112,7 +1206,14 @@ async function takeGardenCard(index) {
 
 async function playHumanCard(handIndex) {
   const player = activePlayer();
-  if (state.gameOver || state.actionPending || state.handoffPending || state.phase !== "play" || player.controller !== "local") return;
+  if (state.net.role === "guest") {
+    if (state.gameOver || state.handoffPending || state.phase !== "play" || !isSelfSeat(player)) return;
+    if (!canPlay(player, player.hand[handIndex])) return;
+    window.clearTimeout(autoTurnTimer);
+    sendNetAction("play", { handIndex });
+    return;
+  }
+  if (state.gameOver || state.actionPending || state.handoffPending || state.phase !== "play" || !isHumanTurnController(player.controller)) return;
   window.clearTimeout(autoTurnTimer);
   const cardId = player.hand[handIndex];
   if (!canPlay(player, cardId)) return;
@@ -1291,15 +1392,18 @@ async function resolveLeek(player) {
     duration: 1050
   });
   let destination = "take";
+  const leekOptionSpec = {
+    title: `${CARD_LIBRARY[revealed].name} 공개`,
+    message: "이 카드를 내 손으로 가져올까요, 상대의 버린 카드 더미에 놓을까요?",
+    options: [
+      { value: "take", label: "내 손으로 가져오기" },
+      { value: "discard", label: `${target.name}의 버림 더미에 놓기` }
+    ]
+  };
   if (player.controller === "local") {
-    destination = await chooseOption({
-      title: `${CARD_LIBRARY[revealed].name} 공개`,
-      message: "이 카드를 내 손으로 가져올까요, 상대의 버린 카드 더미에 놓을까요?",
-      options: [
-        { value: "take", label: "내 손으로 가져오기" },
-        { value: "discard", label: `${target.name}의 버림 더미에 놓기` }
-      ]
-    });
+    destination = await chooseOption(leekOptionSpec);
+  } else if (player.controller === "remote") {
+    destination = await chooseOptionRemote(player, leekOptionSpec);
   } else if (revealed === "artichoke") {
     destination = "discard";
   }
@@ -1354,9 +1458,7 @@ async function resolvePeas(player) {
     variant: "reveal-pair",
     duration: 1050
   });
-  const ownIndex = player.controller === "local"
-    ? (await chooseCards(revealed, 1, "완두콩", "내 버린 카드 더미에 놓을 카드 1장을 고르세요."))[0]
-    : (aiCardPriority(revealed[0]) >= aiCardPriority(revealed[1]) ? 0 : 1);
+  const ownIndex = await chooseIndexFor(player, revealed, "완두콩", "내 버린 카드 더미에 놓을 카드 1장을 고르세요.", aiCardPriority(revealed[0]) >= aiCardPriority(revealed[1]) ? 0 : 1);
   const [ownCard] = revealed.splice(ownIndex, 1);
   const target = await chooseOpponent(player, opponentsOf(player), "나머지 카드를 받을 상대를 고르세요.");
   player.discard.push(ownCard);
@@ -1393,9 +1495,7 @@ async function resolveOnion(player) {
 async function resolveCorn(player) {
   moveCard(player.hand, player.buried, "artichoke");
   moveCard(player.played, player.buried, "corn");
-  const index = player.controller === "local"
-    ? (await chooseCards(state.garden, 1, "옥수수", "내 카드 더미 맨 위에 놓을 정원 카드 1장을 고르세요."))[0]
-    : chooseGardenCardForAi(player);
+  const index = await chooseIndexFor(player, state.garden, "옥수수", "내 카드 더미 맨 위에 놓을 정원 카드 1장을 고르세요.", chooseGardenCardForAi(player));
   const [chosen] = state.garden.splice(index, 1);
   player.deck.push(chosen);
   refillGarden();
@@ -1410,9 +1510,7 @@ async function resolveCorn(player) {
 }
 
 async function resolvePepper(player) {
-  const index = player.controller === "local"
-    ? (await chooseCards(player.discard, 1, "피망", "카드 더미 맨 위에 올릴 버린 카드 1장을 고르세요."))[0]
-    : chooseBestCardIndex(player.discard);
+  const index = await chooseIndexFor(player, player.discard, "피망", "카드 더미 맨 위에 올릴 버린 카드 1장을 고르세요.", chooseBestCardIndex(player.discard));
   const [chosen] = player.discard.splice(index, 1);
   player.deck.push(chosen);
   await showEffectScene({
@@ -1437,9 +1535,7 @@ async function resolveRhubarb(player) {
     variant: "fan",
     duration: 1050
   });
-  const index = player.controller === "local"
-    ? (await chooseCards(state.garden, 1, "새 정원", "루바브 효과로 수확할 카드 1장을 고르세요."))[0]
-    : chooseGardenCardForAi(player);
+  const index = await chooseIndexFor(player, state.garden, "새 정원", "루바브 효과로 수확할 카드 1장을 고르세요.", chooseGardenCardForAi(player));
   const [harvested] = state.garden.splice(index, 1);
   player.hand.push(harvested);
   refillGarden();
@@ -1456,6 +1552,9 @@ async function chooseHandIndex(player, title, message) {
   if (player.controller === "local") {
     if (player.id !== state.visibleHandPlayerId) await requestPrivateChoiceHandoff(player);
     return (await chooseCards(player.hand, 1, title, message))[0];
+  }
+  if (player.controller === "remote") {
+    return (await chooseCardsRemote(player, player.hand, 1, title, message))[0];
   }
   return [...player.hand.keys()].sort((a, b) => passCardScore(player.hand[b]) - passCardScore(player.hand[a]))[0];
 }
@@ -1500,7 +1599,7 @@ async function resolveExpansionCard(player, cardId) {
   if (cardId === "tomato") {
     const revealed = [takeTopCard(player), takeTopCard(player), takeTopCard(player)].filter(Boolean);
     await showEffectScene({ title: "토마토 선별", message: "한 장은 덱 위로, 나머지는 버립니다.", cards: revealed, variant: "reveal-pair", duration: 950 });
-    const index = player.controller === "local" ? (await chooseCards(revealed, 1, "토마토", "덱 맨 위에 되돌릴 카드 1장을 고르세요."))[0] : chooseBestCardIndex(revealed);
+    const index = await chooseIndexFor(player, revealed, "토마토", "덱 맨 위에 되돌릴 카드 1장을 고르세요.", chooseBestCardIndex(revealed));
     const [chosen] = revealed.splice(index, 1);
     player.discard.push(...revealed);
     player.deck.push(chosen);
@@ -1522,9 +1621,8 @@ async function resolveExpansionCard(player, cardId) {
   if (cardId === "turnip") {
     moveCard(player.hand, player.discard, "artichoke");
     const candidates = player.discard.map((id, index) => ({ id, index })).filter(({ id }) => CARD_LIBRARY[id].type === "vegetable");
-    const selected = player.controller === "local"
-      ? (await chooseCards(candidates.map(({ id }) => id), 1, "순무", "손으로 가져올 버린 채소를 고르세요."))[0]
-      : chooseBestCardIndex(candidates.map(({ id }) => id));
+    const candidateIds = candidates.map(({ id }) => id);
+    const selected = await chooseIndexFor(player, candidateIds, "순무", "손으로 가져올 버린 채소를 고르세요.", chooseBestCardIndex(candidateIds));
     const [chosen] = player.discard.splice(candidates[selected].index, 1);
     player.hand.push(chosen);
     return;
@@ -1550,9 +1648,7 @@ async function resolveExpansionCard(player, cardId) {
 
   if (cardId === "mushroom") {
     const candidates = player.discard.filter((id) => MUSHROOM_COPY_IDS.includes(id) && canPlay(player, id));
-    const selected = player.controller === "local"
-      ? (await chooseCards(candidates, 1, "버섯", "효과를 복사할 버린 채소를 고르세요."))[0]
-      : chooseBestCardIndex(candidates);
+    const selected = await chooseIndexFor(player, candidates, "버섯", "효과를 복사할 버린 채소를 고르세요.", chooseBestCardIndex(candidates));
     const chosen = candidates[selected];
     moveCard(player.played, player.buried, "mushroom");
     await showEffectScene({ title: `${CARD_LIBRARY[chosen].name} 효과 복사`, cards: [chosen], variant: "reveal", duration: 750 });
@@ -1584,9 +1680,7 @@ async function resolveExpansionCard(player, cardId) {
     const artichokeIndex = revealed.indexOf("artichoke");
     const chosenIndex = artichokeIndex >= 0
       ? artichokeIndex
-      : player.controller === "local"
-        ? (await chooseCards(revealed, 1, "콩나물", "손으로 가져올 카드 1장을 고르세요."))[0]
-        : chooseBestCardIndex(revealed);
+      : await chooseIndexFor(player, revealed, "콩나물", "손으로 가져올 카드 1장을 고르세요.", chooseBestCardIndex(revealed));
     player.hand.push(revealed[chosenIndex]);
     revealed.splice(chosenIndex, 1);
     player.discard.push(...revealed);
@@ -1618,7 +1712,7 @@ async function resolveExpansionCard(player, cardId) {
     }
     const revealed = [takeTopCard(target), takeTopCard(target)].filter(Boolean);
     await showEffectScene({ title: `${target.name} 덱 위`, cards: revealed, variant: "reveal-pair", duration: 850 });
-    const topIndex = player.controller === "local" ? (await chooseCards(revealed, 1, "셀러리", "맨 위에 놓을 카드를 고르세요."))[0] : revealed.findIndex((id) => id === "artichoke");
+    const topIndex = await chooseIndexFor(player, revealed, "셀러리", "맨 위에 놓을 카드를 고르세요.", revealed.findIndex((id) => id === "artichoke"));
     const resolvedIndex = topIndex < 0 ? 0 : topIndex;
     const [topCard] = revealed.splice(resolvedIndex, 1);
     target.deck.push(...revealed, topCard);
@@ -1635,16 +1729,19 @@ async function resolveExpansionCard(player, cardId) {
       variant: "reveal",
       duration: 800
     });
+    const parsleyOptionSpec = {
+      title: `${CARD_LIBRARY[revealed].name} 확인`,
+      message: "이 카드를 어떻게 처리할까요?",
+      options: [
+        { value: "keep", label: "덱 위에 두기" },
+        { value: "discard", label: "버리기" }
+      ]
+    };
     const destination = player.controller === "local"
-      ? await chooseOption({
-        title: `${CARD_LIBRARY[revealed].name} 확인`,
-        message: "이 카드를 어떻게 처리할까요?",
-        options: [
-          { value: "keep", label: "덱 위에 두기" },
-          { value: "discard", label: "버리기" }
-        ]
-      })
-      : revealed === "artichoke" ? "discard" : "keep";
+      ? await chooseOption(parsleyOptionSpec)
+      : player.controller === "remote"
+        ? await chooseOptionRemote(player, parsleyOptionSpec)
+        : revealed === "artichoke" ? "discard" : "keep";
     if (destination === "discard") player.discard.push(revealed);
     else player.deck.push(revealed);
     log(`파슬리 효과로 ${player.name}이(가) ${CARD_LIBRARY[revealed].name}을(를) ${destination === "discard" ? "버렸습니다" : "덱 위에 두었습니다"}.`);
@@ -1705,6 +1802,9 @@ async function chooseHandCards(player, count, message) {
       onlyArtichokes ? { autoSelect: [0, 1], autoConfirmAfter: 820 } : {}
     );
   }
+  if (player.controller === "remote") {
+    return chooseCardsRemote(player, player.hand, count, "가지", message);
+  }
   return [...player.hand.keys()]
     .sort((a, b) => passCardScore(player.hand[b]) - passCardScore(player.hand[a]))
     .slice(0, count);
@@ -1722,12 +1822,21 @@ function chooseBestCardIndex(cards) {
   return bestIndex;
 }
 
+// local/remote/ai 세 컨트롤러 공통으로 쓰는 "카드 1장 색인 선택" 헬퍼.
+// local은 이 기기의 다이얼로그로, remote는 네트워크 너머 참가자의 화면으로 묻고,
+// ai는 호출측이 미리 계산해 둔 aiIndex를 그대로 쓴다.
+async function chooseIndexFor(player, cards, title, message, aiIndex) {
+  if (player.controller === "local") return (await chooseCards(cards, 1, title, message))[0];
+  if (player.controller === "remote") return (await chooseCardsRemote(player, cards, 1, title, message))[0];
+  return aiIndex;
+}
+
 async function chooseOpponent(player, candidates, message) {
   if (candidates.length === 1) return candidates[0];
   if (player.controller === "ai") {
     return [...candidates].sort((a, b) => countArtichokes(b) - countArtichokes(a))[0];
   }
-  const chosenId = await chooseOption({
+  const optionSpec = {
     title: "상대 선택",
     message,
     options: candidates.map((candidate) => ({
@@ -1735,7 +1844,8 @@ async function chooseOpponent(player, candidates, message) {
       label: candidate.name,
       description: `손패 ${candidate.hand.length} · 덱 ${candidate.deck.length} · 버림 ${candidate.discard.length} · 묻음 ${candidate.buried.length} · 아티초크 ${countArtichokes(candidate)} · 예약 ${candidate.statuses.length}`
     }))
-  });
+  };
+  const chosenId = player.controller === "remote" ? await chooseOptionRemote(player, optionSpec) : await chooseOption(optionSpec);
   return playerById(chosenId);
 }
 
@@ -1816,7 +1926,7 @@ function chooseOption({ title, message, options }) {
 function maybeAutoEndTurn() {
   window.clearTimeout(autoTurnTimer);
   const player = activePlayer();
-  if (state.gameOver || state.actionPending || state.handoffPending || state.phase !== "play" || player.controller !== "local") return;
+  if (state.gameOver || state.actionPending || state.handoffPending || state.phase !== "play" || !isHumanTurnController(player.controller)) return;
   if (player.hand.some((cardId) => canPlay(player, cardId))) return;
   showToast("낼 수 있는 카드가 없어 잠시 후 턴을 넘깁니다.");
   autoTurnTimer = window.setTimeout(() => {
@@ -1826,7 +1936,13 @@ function maybeAutoEndTurn() {
 
 async function endHumanTurn() {
   const player = activePlayer();
-  if (state.gameOver || state.actionPending || state.handoffPending || state.phase !== "play" || player.controller !== "local") return;
+  if (state.net.role === "guest") {
+    if (state.gameOver || state.actionPending || state.handoffPending || state.phase !== "play" || !isSelfSeat(player)) return;
+    window.clearTimeout(autoTurnTimer);
+    sendNetAction("endTurn", {});
+    return;
+  }
+  if (state.gameOver || state.actionPending || state.handoffPending || state.phase !== "play" || !isHumanTurnController(player.controller)) return;
   window.clearTimeout(autoTurnTimer);
   state.actionPending = true;
   render();
@@ -1960,7 +2076,7 @@ function showResultScreen(winner) {
     row.className = "result-row";
     row.innerHTML = `
       <span class="result-rank">${index + 1}</span>
-      <span class="result-player"><strong>${escapeHtml(player.name)}</strong><small>${player.controller === "ai" ? "AI" : "로컬"}</small></span>
+      <span class="result-player"><strong>${escapeHtml(player.name)}</strong><small>${controllerLabel(player.controller)}</small></span>
       <span class="result-stat"><strong>${countArtichokes(player)}</strong><small>아티초크</small></span>
       <span class="result-stat"><strong>${player.buried.length}</strong><small>묻은 카드</small></span>
     `;
@@ -2114,11 +2230,11 @@ function render() {
         : "기본 채소 11종";
     els.wildRuleBanner.innerHTML = `<strong>${SPECIAL_RULES[state.gameOptions.specialRuleId].name}</strong><span>${SPECIAL_RULES[state.gameOptions.specialRuleId].text} · ${gardenNote}</span>`;
   }
-  els.endTurn.disabled = state.gameOver || state.actionPending || state.handoffPending || state.phase !== "play" || player.controller !== "local";
+  els.endTurn.disabled = state.gameOver || state.actionPending || state.handoffPending || state.phase !== "play" || !isSelfSeat(player);
   const cucumberHarvest = state.phase === "harvest" && player.statuses.some((status) => status.type === "cucumber");
   els.gardenHint.textContent = cucumberHarvest
     ? "오이 효과 · 무작위 수확"
-    : state.phase === "harvest" && player.controller === "local" && !state.handoffPending ? "카드 1장을 선택" : "정원 줄";
+    : state.phase === "harvest" && isSelfSeat(player) && !state.handoffPending ? "카드 1장을 선택" : "정원 줄";
   els.handHint.textContent = state.handoffPending ? "손패 인계 대기 중" : state.phase === "play" ? "밝게 표시된 카드만 사용 가능" : "수확 후 사용 가능";
   els.handOwnerName.textContent = visiblePlayer ? `${visiblePlayer.name} 손패` : "가려진 손패";
   els.activeDeckStack.textContent = visiblePlayer?.deck.length ?? "-";
@@ -2130,6 +2246,7 @@ function render() {
   renderOpponentSeats(visiblePlayer, changedPlayerIds);
   renderGarden();
   renderHand(visiblePlayer);
+  if (state.net.role === "host") pushNetworkSync(); // 모든 상태 변화 뒤 원격 참가자에게 최신 뷰를 발행한다
 }
 
 function renderPlayerPanels(changedPlayerIds = new Set()) {
@@ -2144,7 +2261,7 @@ function renderPlayerPanels(changedPlayerIds = new Set()) {
       <div>
         <div class="player-name-row">
           <span class="panel-label">${escapeHtml(player.name)}</span>
-          <span class="controller-badge">${player.controller === "ai" ? "AI" : "로컬"}</span>
+          <span class="controller-badge">${controllerLabel(player.controller)}</span>
         </div>
         <strong>${countArtichokes(player)}</strong>
         <span>아티초크</span>
@@ -2178,7 +2295,7 @@ function renderOpponentSeats(visiblePlayer, changedPlayerIds = new Set()) {
       `<span class="card-back" style="transform:rotate(${(index - 2) * 2}deg)"></span>`).join("");
     seat.innerHTML = `
       <div>
-        <p class="zone-label">${escapeHtml(player.name)} · ${player.controller === "ai" ? "AI" : "로컬"}</p>
+        <p class="zone-label">${escapeHtml(player.name)} · ${controllerLabel(player.controller)}</p>
         <div class="card-backs">${backs}</div>
       </div>
       <div class="pile-row" aria-label="${escapeHtml(player.name)} 카드 더미">
@@ -2197,8 +2314,9 @@ function getPhaseText() {
     return `${winner?.name ?? "누군가"} 승리!`;
   }
   if (state.handoffPending) return `${activePlayer().name}님의 손패 인계를 기다리고 있습니다.`;
-  if (state.actionPending && activePlayer().controller === "local") return "카드 효과를 처리하고 있습니다.";
+  if (state.actionPending && isSelfSeat(activePlayer())) return "카드 효과를 처리하고 있습니다.";
   if (activePlayer().controller === "ai") return "AI가 수를 고르는 중입니다.";
+  if (activePlayer().controller === "remote" && !isSelfSeat(activePlayer())) return `${activePlayer().name}님의 입력을 기다리는 중입니다.`;
   if (state.phase === "harvest" && activePlayer().statuses.some((status) => status.type === "cucumber")) return "오이 효과: 정원 카드를 누르면 무작위로 수확합니다.";
   if (state.phase === "harvest") return "정원 줄에서 카드 1장을 가져오세요.";
   return state.turnLocked ? "당근 효과로 더 이상 카드를 낼 수 없습니다." : "낼 수 있는 카드를 사용하거나 턴을 끝내세요.";
@@ -2212,7 +2330,7 @@ function renderGarden() {
       els.garden.append(createCompactCard(cardId, {
         count,
         onClick: () => takeGardenCard(firstIndex),
-        disabled: state.actionPending || state.handoffPending || state.phase !== "harvest" || activePlayer().controller !== "local" || state.gameOver,
+        disabled: state.actionPending || state.handoffPending || state.phase !== "harvest" || !isSelfSeat(activePlayer()) || state.gameOver,
         wakeIndex: displayIndex
       }));
     });
@@ -2221,7 +2339,7 @@ function renderGarden() {
   state.garden.forEach((cardId, index) => {
     els.garden.append(createCard(cardId, {
       onClick: () => takeGardenCard(index),
-      disabled: state.actionPending || state.handoffPending || state.phase !== "harvest" || activePlayer().controller !== "local" || state.gameOver
+      disabled: state.actionPending || state.handoffPending || state.phase !== "harvest" || !isSelfSeat(activePlayer()) || state.gameOver
     }));
   });
 }
@@ -2235,7 +2353,7 @@ function renderHand(player) {
   }
   if (compactCardQuery.matches) {
     groupedCards(player.hand).forEach(({ cardId, count, firstIndex }, displayIndex) => {
-      const playable = !state.actionPending && !state.handoffPending && player.controller === "local" && state.phase === "play" && activePlayer().id === player.id && canPlay(player, cardId);
+      const playable = !state.actionPending && !state.handoffPending && isSelfSeat(player) && state.phase === "play" && activePlayer().id === player.id && canPlay(player, cardId);
       els.hand.append(createCompactCard(cardId, {
         count,
         onClick: () => playHumanCard(firstIndex),
@@ -2247,7 +2365,7 @@ function renderHand(player) {
     return;
   }
   player.hand.forEach((cardId, index) => {
-    const playable = !state.actionPending && !state.handoffPending && player.controller === "local" && state.phase === "play" && activePlayer().id === player.id && canPlay(player, cardId);
+    const playable = !state.actionPending && !state.handoffPending && isSelfSeat(player) && state.phase === "play" && activePlayer().id === player.id && canPlay(player, cardId);
     const card = createCard(cardId, {
       onClick: () => playHumanCard(index),
       disabled: !playable,
@@ -2312,12 +2430,374 @@ function createCard(cardId, options = {}) {
   return button;
 }
 
+// ════════════════════════════════════════════════════════════════
+// 온라인 모드 — 호스트 권위(host-authority) 동기화
+//
+// 호스트 탭만 이 게임의 실제 로직(랜덤 처리, 카드 효과 처리)을 실행한다.
+// 게스트 탭은 이 파일을 그대로 불러오지만 setupGame을 직접 호출하지 않고,
+// 호스트가 보내는 redactStateForPlayer 결과로 자신의 state를 덮어써서
+// render()만 재사용한다. 게스트의 클릭(takeGardenCard/playHumanCard/
+// endHumanTurn)과 chooseCards/chooseOption 대신 쓰이는 chooseCardsRemote/
+// chooseOptionRemote는 실제 로직을 실행하지 않고 액션 메시지를 보내거나
+// 받기만 한다. 이 파일의 "단일 진행 함수 재사용" 원칙 덕분에, 원격 좌석은
+// takeGardenCard/playHumanCard/endHumanTurn/chooseCards류의 async 흐름을
+// 그대로 타면서 로컬 다이얼로그 대신 네트워크 왕복을 기다리게 된다.
+// ════════════════════════════════════════════════════════════════
+
+// 상대방의 손패 내용과 덱/정원 덱의 순서를 감추고, 개수만 남긴 뷰를 만든다.
+// 정원 줄, 버림 더미, 묻은 카드, 단계, 턴처럼 원래 공개 정보인 것들은 그대로 둔다.
+function redactStateForPlayer(fullState, viewerId) {
+  return {
+    players: fullState.players.map((player) => {
+      const isViewer = player.id === viewerId;
+      return {
+        id: player.id,
+        name: player.name,
+        seat: player.seat,
+        controller: player.controller,
+        // 자신의 손패/덱은 실제 카드 id 그대로, 남의 것은 개수만 알 수 있도록 null로 채운 배열.
+        // 이렇게 하면 .length를 쓰는 기존 렌더링/canPlay 로직을 그대로 재사용할 수 있으면서도
+        // 카드 정체성은 전달되지 않는다.
+        deck: isViewer ? [...player.deck] : Array(player.deck.length).fill(null),
+        hand: isViewer ? [...player.hand] : Array(player.hand.length).fill(null),
+        discard: [...player.discard],
+        buried: [...player.buried],
+        played: [...player.played],
+        statuses: player.statuses.map((status) => ({ ...status }))
+      };
+    }),
+    roomConfig: fullState.roomConfig,
+    gameOptions: fullState.gameOptions,
+    expansionCardIds: fullState.expansionCardIds,
+    matchGardenCardIds: fullState.matchGardenCardIds,
+    garden: [...fullState.garden],
+    gardenDeck: Array(fullState.gardenDeck.length).fill(null), // 순서/정체 비공개, 개수만 유지
+    currentPlayerId: fullState.currentPlayerId,
+    phase: fullState.phase,
+    gameOver: fullState.gameOver,
+    winnerId: fullState.winnerId,
+    turn: fullState.turn,
+    actionPending: fullState.actionPending,
+    handoffPending: false, // 원격 참가자에게는 로컬 핫시트 인계 개념이 없다
+    visibleHandPlayerId: viewerId, // 이 뷰를 받는 사람에게는 항상 자신의 손패를 보여준다
+    turnLocked: fullState.turnLocked,
+    cardsPlayedThisTurn: fullState.cardsPlayedThisTurn,
+    firstBuryBonusUsed: fullState.firstBuryBonusUsed,
+    statusSequence: fullState.statusSequence
+  };
+}
+
+// ── 호스트 → 원격 참가자: 선택 요청 ────────────────────────────────
+// chooseCards/chooseOption과 정확히 같은 반환 모양(색인 배열 / 선택한 value)을
+// 주지만, 이 기기에 다이얼로그를 띄우는 대신 해당 참가자의 뷰에 prompt를 실어
+// 보내고 그 참가자가 보내는 "choice" 액션이 올 때까지 기다린다.
+function chooseCardsRemote(player, cards, count, title, message) {
+  return new Promise((resolve) => {
+    const promptSeq = (state.net.promptSeq += 1);
+    pendingRemoteChoice = { playerId: player.id, promptSeq, resolve };
+    state.net.activePrompts[player.id] = { seq: promptSeq, kind: "cards", cards: [...cards], count, title, message };
+    pushNetworkSync();
+  });
+}
+
+function chooseOptionRemote(player, { title, message, options }) {
+  return new Promise((resolve) => {
+    const promptSeq = (state.net.promptSeq += 1);
+    pendingRemoteChoice = { playerId: player.id, promptSeq, resolve };
+    state.net.activePrompts[player.id] = { seq: promptSeq, kind: "option", title, message, options };
+    pushNetworkSync();
+  });
+}
+
+// ── 호스트: 상태 동기화 발행 ────────────────────────────────────────
+let networkSyncInFlight = false;
+let networkSyncQueued = false;
+
+async function pushNetworkSync() {
+  if (state.net.role !== "host" || !state.net.roomCode || !window.ArtichokeNet) return;
+  if (networkSyncInFlight) { networkSyncQueued = true; return; }
+  const remotePlayers = state.players.filter((candidate) => candidate.controller === "remote");
+  if (remotePlayers.length === 0) return;
+  networkSyncInFlight = true;
+  try {
+    const views = {};
+    remotePlayers.forEach((remotePlayer) => {
+      views[remotePlayer.id] = {
+        state: redactStateForPlayer(state, remotePlayer.id),
+        prompt: state.net.activePrompts[remotePlayer.id] ?? null
+      };
+    });
+    let result = await window.ArtichokeNet.writeState(state.net.roomCode, state.net.seq, { views });
+    if (!result.committed) {
+      // 방금 seq가 앞서 있었다면(재접속 등) 최신 seq로 한 번만 재시도한다.
+      result = await window.ArtichokeNet.writeState(state.net.roomCode, result.seq, { views });
+    }
+    if (result.committed) state.net.seq = result.seq;
+  } catch (err) {
+    console.error("[artichoke-net] 상태 동기화 실패", err);
+  } finally {
+    networkSyncInFlight = false;
+    if (networkSyncQueued) {
+      networkSyncQueued = false;
+      pushNetworkSync();
+    }
+  }
+}
+
+// ── 호스트: 게스트 → 호스트 액션 적용 ────────────────────────────────
+function handleHostRoomUpdate(room) {
+  if (!room) return;
+  assignJoinedGuests(room);
+  Object.entries(room.actions ?? {}).forEach(([playerId, action]) => {
+    if (!action) return;
+    const lastSeq = state.net.lastAppliedActionSeq[playerId] ?? 0;
+    if (action.seq <= lastSeq) return;
+    state.net.lastAppliedActionSeq[playerId] = action.seq;
+    applyIncomingAction(playerId, action);
+  });
+  renderOnlineRoster(room);
+}
+
+function assignJoinedGuests(room) {
+  const configs = readRoomSlots();
+  const remoteSeatIds = configs
+    .map((config, seat) => ({ seatPlayerId: `player-${seat + 1}`, controller: config.controller }))
+    .filter((seat) => seat.controller === "remote")
+    .map((seat) => seat.seatPlayerId);
+  const claimedSeats = new Set(Object.keys(state.net.remoteAssignments));
+  const claimedGuests = new Set(Object.values(state.net.remoteAssignments));
+  Object.entries(room.players ?? {}).forEach(([guestId, info]) => {
+    if (guestId === "host" || !info) return;
+    if (info.assignedPlayerId) {
+      state.net.remoteAssignments[info.assignedPlayerId] = guestId;
+      return;
+    }
+    if (claimedGuests.has(guestId)) return;
+    const openSeat = remoteSeatIds.find((seatId) => !claimedSeats.has(seatId));
+    if (!openSeat) return;
+    claimedSeats.add(openSeat);
+    claimedGuests.add(guestId);
+    state.net.remoteAssignments[openSeat] = guestId;
+    window.ArtichokeNet.updateRoom(state.net.roomCode, {
+      [`players/${guestId}/assignedPlayerId`]: openSeat
+    }).catch((err) => console.error("[artichoke-net] 좌석 배정 실패", err));
+  });
+}
+
+function applyIncomingAction(playerId, action) {
+  if (action.kind === "choice") {
+    if (
+      pendingRemoteChoice &&
+      pendingRemoteChoice.playerId === playerId &&
+      pendingRemoteChoice.promptSeq === action.payload?.promptSeq
+    ) {
+      const resolve = pendingRemoteChoice.resolve;
+      pendingRemoteChoice = null;
+      delete state.net.activePrompts[playerId];
+      resolve(action.payload.result);
+    }
+    return; // 지연 도착/중복 응답은 조용히 무시한다.
+  }
+  const player = activePlayer();
+  if (!player || player.id !== playerId || player.controller !== "remote") return; // 지금 그 사람 차례가 아니면 무시
+  if (action.kind === "harvest") takeGardenCard(action.payload?.index);
+  else if (action.kind === "play") playHumanCard(action.payload?.handIndex);
+  else if (action.kind === "endTurn") endHumanTurn();
+}
+
+function renderOnlineRoster(room) {
+  if (!els.onlineRoster || state.net.role !== "host") return;
+  const configs = readRoomSlots();
+  const remoteSeats = configs
+    .map((config, seat) => ({ seat: seat + 1, id: `player-${seat + 1}`, name: config.name, controller: config.controller }))
+    .filter((seat) => seat.controller === "remote");
+  els.onlineRoster.innerHTML = remoteSeats.map((seat) => {
+    const guestId = state.net.remoteAssignments[seat.id];
+    const guest = guestId ? room.players?.[guestId] : null;
+    const status = guest ? `${escapeHtml(guest.name)} 입장${guest.online ? "" : " · 연결 끊김"}` : "대기 중";
+    return `<li>${escapeHtml(seat.name)} (좌석 ${seat.seat}) — ${status}</li>`;
+  }).join("");
+}
+
+// ── 게스트: 액션 전송, 뷰 적용 ────────────────────────────────────────
+function sendNetAction(kind, payload) {
+  if (state.net.role !== "guest" || !state.net.roomCode || !state.net.myPlayerId || !window.ArtichokeNet) return;
+  window.ArtichokeNet.sendAction(state.net.roomCode, state.net.myPlayerId, kind, payload)
+    .catch((err) => console.error("[artichoke-net] 액션 전송 실패", err));
+}
+
+function handleGuestRoomUpdate(room) {
+  if (!room) {
+    showToast("방 연결이 끊어졌습니다.");
+    return;
+  }
+  const me = room.players?.[state.net.guestId];
+  if (!me) return;
+  if (me.assignedPlayerId) state.net.myPlayerId = me.assignedPlayerId;
+  if (room.phase !== "playing" || !state.net.myPlayerId) {
+    if (els.onlineJoinStatus) {
+      els.onlineJoinStatus.textContent = state.net.myPlayerId
+        ? "호스트가 게임을 시작하기를 기다리는 중입니다..."
+        : "호스트가 좌석을 배정하는 중입니다...";
+    }
+    return;
+  }
+  const view = room.views?.[state.net.myPlayerId];
+  if (!view) return;
+  if (!state.net.enteredGame) {
+    state.net.enteredGame = true;
+    if (els.onlineDialog.open) els.onlineDialog.close();
+    document.querySelectorAll(".winner").forEach((node) => node.classList.remove("winner"));
+    els.titleScreen.hidden = true;
+    els.gameShell.hidden = false;
+    if (state.sound) startBackgroundMusic();
+  }
+  applyIncomingView(view);
+}
+
+// Firebase RTDB는 빈 배열([])을 쓰면 그 키를 통째로 지워버려서, 읽을 때는
+// undefined로 돌아온다. garden/gardenDeck과 플레이어별 discard/buried/played/
+// statuses는 게임 도중 실제로 자주 빈 배열이 되는 필드들이라(게임 시작 직후
+// discard/buried/played/statuses, 정원 덱 소진 시 gardenDeck 등), 게스트가
+// 받는 view.state를 그대로 Object.assign하면 game.js 전역에 널려있는 무가드
+// .length/.filter/.splice 호출이 게스트 화면에서만 터진다(호스트는 로컬
+// in-memory state를 그대로 쓰므로 이 라운드트립을 안 거친다).
+function hydrateIncomingViewState(viewState) {
+  viewState.roomConfig = viewState.roomConfig || [];
+  viewState.expansionCardIds = viewState.expansionCardIds || [];
+  viewState.matchGardenCardIds = viewState.matchGardenCardIds || [];
+  viewState.gardenDeck = viewState.gardenDeck || [];
+  viewState.garden = viewState.garden || [];
+  (viewState.players || []).forEach((player) => {
+    player.deck = player.deck || [];
+    player.hand = player.hand || [];
+    player.discard = player.discard || [];
+    player.buried = player.buried || [];
+    player.played = player.played || [];
+    player.statuses = player.statuses || [];
+  });
+  return viewState;
+}
+
+function applyIncomingView(view) {
+  if (!view?.state) return;
+  const wasGameOver = state.gameOver;
+  Object.assign(state, hydrateIncomingViewState(view.state)); // state.net은 view.state에 없는 필드라 그대로 보존된다
+  render();
+  if (state.gameOver && !wasGameOver) {
+    const winner = playerById(state.winnerId);
+    if (winner) showResultScreen(winner);
+  }
+  maybeHandleIncomingPrompt(view.prompt);
+}
+
+async function maybeHandleIncomingPrompt(prompt) {
+  if (!prompt || prompt.seq === state.net.lastGuestPromptSeq) return;
+  state.net.lastGuestPromptSeq = prompt.seq;
+  const result = prompt.kind === "cards"
+    ? await chooseCards(prompt.cards, prompt.count, prompt.title, prompt.message)
+    : await chooseOption({ title: prompt.title, message: prompt.message, options: prompt.options });
+  sendNetAction("choice", { promptSeq: prompt.seq, result });
+}
+
+// ── 온라인 방 로비 UI(호스트/참가 최소 구성) ─────────────────────────
+function syncOnlineDialogFromSlots() {
+  if (state.net.role === "host" || !els.onlineCreateRoom) return;
+  const remoteCount = readRoomSlots().filter((slot) => slot.controller === "remote").length;
+  els.onlineCreateRoom.disabled = remoteCount === 0;
+}
+
+function switchOnlineTab(tab) {
+  els.onlineTabs.querySelectorAll("button[data-tab]").forEach((button) => button.classList.toggle("active", button.dataset.tab === tab));
+  els.onlineHostPanel.hidden = tab !== "host";
+  els.onlineJoinPanel.hidden = tab !== "join";
+}
+
+function openOnlineDialog() {
+  els.onlineError.textContent = "";
+  switchOnlineTab(state.net.role === "guest" ? "join" : "host");
+  syncOnlineDialogFromSlots();
+  els.onlineDialog.showModal();
+}
+
+async function createOnlineRoom() {
+  if (!window.ArtichokeNet) { els.onlineError.textContent = "네트워크 모듈을 아직 불러오지 못했습니다. 잠시 후 다시 시도하세요."; return; }
+  if (state.net.role === "guest") { els.onlineError.textContent = "이미 다른 방에 참가한 상태입니다."; return; }
+  const remoteCount = readRoomSlots().filter((slot) => slot.controller === "remote").length;
+  if (remoteCount === 0) { els.onlineError.textContent = "먼저 방 설정에서 좌석 하나 이상을 '온라인 참가자'로 지정하세요."; return; }
+  els.onlineCreateRoom.disabled = true;
+  try {
+    const code = await window.ArtichokeNet.createRoom({ id: "host", name: "호스트" });
+    state.net.role = "host";
+    state.net.roomCode = code;
+    state.net.remoteAssignments = {};
+    state.net.lastAppliedActionSeq = {};
+    state.net.seq = 0;
+    window.ArtichokeNet.setupPresence(code, "host");
+    state.net.unsubscribeRoom = window.ArtichokeNet.subscribeRoom(code, handleHostRoomUpdate);
+    els.onlineRoomCode.textContent = code;
+    els.onlineRoomInfo.hidden = false;
+    els.onlineError.textContent = "";
+  } catch (err) {
+    els.onlineError.textContent = "방을 만들지 못했습니다: " + err.message;
+  } finally {
+    els.onlineCreateRoom.disabled = false;
+  }
+}
+
+async function joinOnlineRoom() {
+  if (!window.ArtichokeNet) { els.onlineError.textContent = "네트워크 모듈을 아직 불러오지 못했습니다. 잠시 후 다시 시도하세요."; return; }
+  if (state.net.role === "host") { els.onlineError.textContent = "이미 방을 만든 상태입니다."; return; }
+  const code = els.onlineJoinCode.value.trim().toUpperCase();
+  const name = els.onlineJoinName.value.trim() || "참가자";
+  if (!code) { els.onlineError.textContent = "참가 코드를 입력하세요."; return; }
+  const guestId = `guest-${Math.random().toString(36).slice(2, 9)}`;
+  els.onlineJoin.disabled = true;
+  try {
+    await window.ArtichokeNet.joinRoom(code, { id: guestId, name });
+    state.net.role = "guest";
+    state.net.roomCode = code;
+    state.net.guestId = guestId;
+    state.net.enteredGame = false;
+    state.net.lastGuestPromptSeq = 0;
+    window.ArtichokeNet.setupPresence(code, guestId);
+    state.net.unsubscribeRoom = window.ArtichokeNet.subscribeRoom(code, handleGuestRoomUpdate);
+    els.onlineJoinStatus.textContent = "참가했습니다. 호스트의 좌석 배정을 기다리는 중...";
+    els.onlineError.textContent = "";
+  } catch (err) {
+    els.onlineError.textContent = "참가하지 못했습니다: " + err.message;
+  } finally {
+    els.onlineJoin.disabled = false;
+  }
+}
+
+function leaveOnlineRoom() {
+  if (state.net.unsubscribeRoom) {
+    state.net.unsubscribeRoom();
+    state.net.unsubscribeRoom = null;
+  }
+  if (window.ArtichokeNet) window.ArtichokeNet.clearRejoin();
+  state.net.role = null;
+  state.net.roomCode = null;
+  state.net.myPlayerId = null;
+  state.net.guestId = null;
+  state.net.remoteAssignments = {};
+  state.net.enteredGame = false;
+  if (els.onlineRoomInfo) els.onlineRoomInfo.hidden = true;
+  if (els.onlineJoinStatus) els.onlineJoinStatus.textContent = "";
+  if (els.onlineDialog.open) els.onlineDialog.close();
+  showTitleScreen();
+}
+
 els.choiceDialog.addEventListener("cancel", (event) => event.preventDefault());
 els.handoffDialog.addEventListener("cancel", (event) => event.preventDefault());
 els.resultDialog.addEventListener("cancel", (event) => event.preventDefault());
 els.matchCardsDialog.addEventListener("cancel", (event) => event.preventDefault());
 els.endTurn.addEventListener("click", endHumanTurn);
-els.newGame.addEventListener("click", showTitleScreen);
+els.newGame.addEventListener("click", () => {
+  if (state.net.role === "guest") { leaveOnlineRoom(); return; }
+  showTitleScreen();
+});
 els.help.addEventListener("click", () => els.helpDialog.showModal());
 els.compactLog.addEventListener("click", () => els.logPanel.classList.toggle("compact"));
 els.sound.addEventListener("click", () => {
@@ -2371,11 +2851,36 @@ els.customSetupDialog.addEventListener("close", () => {
 });
 
 els.startGame.addEventListener("click", startConfiguredGame);
-els.resultRematch.addEventListener("click", () => setupGame(
-  state.roomConfig,
-  state.gameOptions.mode === "custom" ? state.gameOptions : { mode: state.gameOptions.mode }
-));
-els.resultLobby.addEventListener("click", showTitleScreen);
+els.resultRematch.addEventListener("click", () => {
+  if (state.net.role === "guest") { showToast("호스트만 재대결을 시작할 수 있습니다."); return; }
+  setupGame(
+    state.roomConfig,
+    state.gameOptions.mode === "custom" ? state.gameOptions : { mode: state.gameOptions.mode }
+  );
+});
+els.resultLobby.addEventListener("click", () => {
+  if (state.net.role === "guest") { leaveOnlineRoom(); return; }
+  showTitleScreen();
+});
+els.onlineDialog.addEventListener("cancel", (event) => event.preventDefault());
+els.onlineButton.addEventListener("click", openOnlineDialog);
+els.closeOnlineDialog.addEventListener("click", () => els.onlineDialog.close());
+els.onlineTabs.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-tab]");
+  if (!button) return;
+  switchOnlineTab(button.dataset.tab);
+});
+els.onlineCreateRoom.addEventListener("click", createOnlineRoom);
+els.onlineCopyCode.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(els.onlineRoomCode.textContent);
+    showToast("코드를 복사했습니다.");
+  } catch (err) {
+    showToast("복사에 실패했습니다.");
+  }
+});
+els.onlineLeaveHost.addEventListener("click", leaveOnlineRoom);
+els.onlineJoin.addEventListener("click", joinOnlineRoom);
 els.handoffConfirm.addEventListener("click", () => {
   if (privateHandoffResolver) {
     const resolve = privateHandoffResolver;
