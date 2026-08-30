@@ -2655,10 +2655,34 @@ function handleGuestRoomUpdate(room) {
   applyIncomingView(view);
 }
 
+// Firebase RTDB는 빈 배열([])을 쓰면 그 키를 통째로 지워버려서, 읽을 때는
+// undefined로 돌아온다. garden/gardenDeck과 플레이어별 discard/buried/played/
+// statuses는 게임 도중 실제로 자주 빈 배열이 되는 필드들이라(게임 시작 직후
+// discard/buried/played/statuses, 정원 덱 소진 시 gardenDeck 등), 게스트가
+// 받는 view.state를 그대로 Object.assign하면 game.js 전역에 널려있는 무가드
+// .length/.filter/.splice 호출이 게스트 화면에서만 터진다(호스트는 로컬
+// in-memory state를 그대로 쓰므로 이 라운드트립을 안 거친다).
+function hydrateIncomingViewState(viewState) {
+  viewState.roomConfig = viewState.roomConfig || [];
+  viewState.expansionCardIds = viewState.expansionCardIds || [];
+  viewState.matchGardenCardIds = viewState.matchGardenCardIds || [];
+  viewState.gardenDeck = viewState.gardenDeck || [];
+  viewState.garden = viewState.garden || [];
+  (viewState.players || []).forEach((player) => {
+    player.deck = player.deck || [];
+    player.hand = player.hand || [];
+    player.discard = player.discard || [];
+    player.buried = player.buried || [];
+    player.played = player.played || [];
+    player.statuses = player.statuses || [];
+  });
+  return viewState;
+}
+
 function applyIncomingView(view) {
   if (!view?.state) return;
   const wasGameOver = state.gameOver;
-  Object.assign(state, view.state); // state.net은 view.state에 없는 필드라 그대로 보존된다
+  Object.assign(state, hydrateIncomingViewState(view.state)); // state.net은 view.state에 없는 필드라 그대로 보존된다
   render();
   if (state.gameOver && !wasGameOver) {
     const winner = playerById(state.winnerId);
